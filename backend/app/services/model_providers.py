@@ -35,7 +35,7 @@ class ModelRequest(BaseModel):
 class ModelResponse(BaseModel):
     content: str
     tool_calls: Optional[List[Dict[str, Any]]] = None
-    usage: Optional[Dict[str, int]] = None
+    usage: Optional[Dict[str, Any]] = None
     model: str
     provider: str
     latency_ms: int
@@ -49,16 +49,16 @@ MODEL_ALIASES: Dict[str, str] = {
     "nex n2.5 pro":                           "nex-agi/nex-n2.5-pro:free",
     "nex_n2.5_pro":                           "nex-agi/nex-n2.5-pro:free",
     # Nemotron 3 Ultra (OpenCode)
-    "nemotron 3 ultra":                       "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
-    "nemotron-3-ultra":                       "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
-    "nemotron_3_ultra":                       "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
-    "nvidia/nemotron-3-ultra-550b-a55b:free": "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
-    "nvidia/llama-3.1-nemotron-ultra-253b-v1:free": "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
+    "nemotron 3 ultra":                       "nex-agi/nex-n2.5-pro:free",
+    "nemotron-3-ultra":                       "nex-agi/nex-n2.5-pro:free",
+    "nemotron_3_ultra":                       "nex-agi/nex-n2.5-pro:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free": "nex-agi/nex-n2.5-pro:free",
+    "nvidia/llama-3.1-nemotron-ultra-253b-v1:free": "nex-agi/nex-n2.5-pro:free",
     # North Mini Code (ExperimentalLabs)
-    "north mini code":                        "cohere/command-r-plus-08-2024",
-    "north-mini-code":                        "cohere/command-r-plus-08-2024",
-    "north_mini_code":                        "cohere/command-r-plus-08-2024",
-    "cohere/north-mini-code:free":            "cohere/command-r-plus-08-2024",
+    "north mini code":                        "nex-agi/nex-n2.5-pro:free",
+    "north-mini-code":                        "nex-agi/nex-n2.5-pro:free",
+    "north_mini_code":                        "nex-agi/nex-n2.5-pro:free",
+    "cohere/north-mini-code:free":            "nex-agi/nex-n2.5-pro:free",
     # Common cloud models
     "anthropic/claude-3.5-sonnet":            "anthropic/claude-3.5-sonnet",
     "claude-3.5-sonnet":                      "anthropic/claude-3.5-sonnet",
@@ -156,7 +156,7 @@ class OpenRouterProvider(ModelProvider):
             payload["tools"] = request.tools
             payload["tool_choice"] = request.tool_choice or "auto"
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as session:
             async with session.post(
                 f"{self.base_url}/chat/completions",
                 headers=self._headers(),
@@ -188,7 +188,7 @@ class OpenRouterProvider(ModelProvider):
         if request.max_tokens:
             payload["max_tokens"] = request.max_tokens
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as session:
             async with session.post(
                 f"{self.base_url}/chat/completions",
                 headers=self._headers(),
@@ -220,18 +220,24 @@ class OpenCodeProvider(OpenRouterProvider):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         opencode_key = config.get("api_key") or os.getenv("OPENCODE_API_KEY", "")
-        # Fall back to OpenRouter key if OpenCode key not present
-        self.api_key = opencode_key or os.getenv("OPENROUTER_API_KEY", "")
+        openrouter_key = config.get("openrouter_key") or os.getenv("OPENROUTER_API_KEY", "")
+        if opencode_key and opencode_key.startswith("sk-or-"):
+            self.api_key = opencode_key
+        else:
+            self.api_key = openrouter_key
+
         self.base_url = "https://openrouter.ai/api/v1"
 
+    def is_available(self) -> bool:
+        return bool(self.api_key and self.api_key.startswith("sk-or-"))
+
     def get_default_model(self) -> str:
-        return "nvidia/llama-3.1-nemotron-ultra-253b-v1:free"
+        return "nex-agi/nex-n2.5-pro:free"
 
     def get_models(self) -> List[str]:
         return [
-            "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
             "nex-agi/nex-n2.5-pro:free",
-            "meta-llama/llama-3.1-70b-instruct",
+            "nex-agi/nex-n2.5-mini:free",
         ]
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
@@ -252,17 +258,24 @@ class ExperientialLabsProvider(OpenRouterProvider):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         xpl_key = config.get("api_key") or os.getenv("EXPERIENTIAL_LABS_API_KEY", "")
-        self.api_key = xpl_key or os.getenv("OPENROUTER_API_KEY", "")
+        openrouter_key = config.get("openrouter_key") or os.getenv("OPENROUTER_API_KEY", "")
+        if xpl_key and xpl_key.startswith("sk-or-"):
+            self.api_key = xpl_key
+        else:
+            self.api_key = openrouter_key
+
         self.base_url = "https://openrouter.ai/api/v1"
 
+    def is_available(self) -> bool:
+        return bool(self.api_key and self.api_key.startswith("sk-or-"))
+
     def get_default_model(self) -> str:
-        return "cohere/command-r-plus-08-2024"
+        return "nex-agi/nex-n2.5-pro:free"
 
     def get_models(self) -> List[str]:
         return [
-            "cohere/command-r-plus-08-2024",
             "nex-agi/nex-n2.5-pro:free",
-            "meta-llama/llama-3.1-70b-instruct",
+            "nex-agi/nex-n2.5-mini:free",
         ]
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
@@ -482,18 +495,22 @@ class ModelRouter:
         self._init_providers()
 
     def _init_providers(self):
-        if getattr(self.settings, "OPENROUTER_API_KEY", None):
+        openrouter_key = getattr(self.settings, "OPENROUTER_API_KEY", None) or os.getenv("OPENROUTER_API_KEY", "")
+
+        if openrouter_key:
             self.providers["openrouter"] = OpenRouterProvider({
-                "api_key": self.settings.OPENROUTER_API_KEY,
+                "api_key": openrouter_key,
                 "base_url": getattr(self.settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
             })
 
         self.providers["opencode"] = OpenCodeProvider({
             "api_key": getattr(self.settings, "OPENCODE_API_KEY", ""),
+            "openrouter_key": openrouter_key,
         })
 
         self.providers["experiential_labs"] = ExperientialLabsProvider({
             "api_key": getattr(self.settings, "EXPERIENTIAL_LABS_API_KEY", ""),
+            "openrouter_key": openrouter_key,
         })
         self.providers["xpl"] = self.providers["experiential_labs"]
 
@@ -570,17 +587,18 @@ class ModelRouter:
         max_fallbacks: int = 3,
     ) -> ModelResponse:
         providers = self._provider_priority(agent_provider, task_type)
-        last_error: Optional[Exception] = None
+        errors: List[str] = []
 
         for provider in providers[:max_fallbacks]:
             resolved = self._resolve_request(request, provider)
             try:
                 return await provider.complete(resolved)
             except Exception as exc:
-                last_error = exc
+                errors.append(f"[{provider.name}] {exc}")
                 continue
 
-        raise Exception(f"All providers failed. Last error: {last_error}")
+        error_summary = " | ".join(errors) if errors else "No available providers"
+        raise Exception(f"All providers failed: {error_summary}")
 
     async def stream_complete_with_fallback(
         self,
@@ -590,7 +608,7 @@ class ModelRouter:
         max_fallbacks: int = 3,
     ) -> AsyncGenerator[str, None]:
         providers = self._provider_priority(agent_provider, task_type)
-        last_error: Optional[Exception] = None
+        errors: List[str] = []
 
         for provider in providers[:max_fallbacks]:
             resolved = self._resolve_request(request, provider)
@@ -599,10 +617,11 @@ class ModelRouter:
                     yield chunk
                 return
             except Exception as exc:
-                last_error = exc
+                errors.append(f"[{provider.name}] {exc}")
                 continue
 
-        raise Exception(f"All providers failed. Last error: {last_error}")
+        error_summary = " | ".join(errors) if errors else "No available providers"
+        raise Exception(f"All providers failed: {error_summary}")
 
     # Keep old signature for backwards compat
     def get_model_provider_for_task(self, task_type: str) -> Optional[ModelProvider]:

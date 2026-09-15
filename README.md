@@ -32,12 +32,24 @@ A local-first, extensible AI workforce orchestration platform for Linux.
 
 ### Backend
 
+**On Linux / macOS:**
 ```bash
 cd backend
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp ../.env.example .env
+# Edit .env with your API keys
+python -m app.main
+```
+
+**On Windows (PowerShell):**
+```powershell
+cd backend
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item ..\.env.example .env
 # Edit .env with your API keys
 python -m app.main
 ```
