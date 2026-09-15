@@ -32,7 +32,6 @@ A local-first, extensible AI workforce orchestration platform for Linux.
 
 ### Backend
 
-**On Linux / macOS:**
 ```bash
 cd backend
 python3 -m venv venv
@@ -42,16 +41,22 @@ cp ../.env.example .env
 # Edit .env with your API keys
 python -m app.main
 ```
+The error occurred because python -m app.main was run using your system/global Python installation, whereas aiohttp and the other backend dependencies are installed inside the project's virtual environment (backend\venv).
 
-**On Windows (PowerShell):**
-```powershell
-cd backend
-python -m venv venv
+Solution
+In your backend terminal (c:\Users\tmana\projects\ai-workforce\backend), run either of the following:
+
+Option 1: Activate the virtual environment first (PowerShell)
+powershell
+```bash
 .\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item ..\.env.example .env
-# Edit .env with your API keys
 python -m app.main
+```
+
+Option 2: Run directly using the virtual environment's Python
+powershell
+```bash
+.\venv\Scripts\python.exe -m app.main
 ```
 
 Server runs on http://localhost:8000

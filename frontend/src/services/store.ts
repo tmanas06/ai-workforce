@@ -33,6 +33,7 @@ interface WorkforceState {
   removeTask: (id: number) => void;
   setTaskStatus: (taskId: number, status: TaskStatus, details?: any) => void;
   
+  setEvents: (events: Event[]) => void;
   addEvent: (event: Event) => void;
   addLog: (log: LogEntry) => void;
   clearLogs: () => void;
@@ -94,9 +95,10 @@ export const useWorkforceStore = create<WorkforceState>()(
       })),
       setTaskStatus: (taskId, status, details) => set((state) => ({
         taskStatuses: { ...state.taskStatuses, [taskId]: status },
-        tasks: state.tasks.map(t => t.id === taskId ? { ...t, status } : t),
+        tasks: state.tasks.map(t => t.id === taskId ? { ...t, status, ...(details || {}) } : t),
       })),
       
+      setEvents: (events) => set({ events }),
       addEvent: (event) => set((state) => ({
         events: [event, ...state.events].slice(0, 500),
       })),

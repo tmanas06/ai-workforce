@@ -30,6 +30,7 @@ export function Dashboard() {
     setCurrentProject,
     setAgents,
     setTasks,
+    setEvents,
     addEvent,
     addLog,
     setConnected,
@@ -65,7 +66,7 @@ export function Dashboard() {
         setCurrentProject(project);
         setAgents(agentsData);
         setTasks(tasksData);
-        eventsData.forEach(addEvent);
+        setEvents(eventsData);
         
         unsub = initializeWebSocket(pid);
         setConnected(true);
@@ -117,12 +118,14 @@ export function Dashboard() {
   const handleRefresh = async () => {
     if (!pid) return;
     try {
-      const [agentsData, tasksData] = await Promise.all([
+      const [agentsData, tasksData, eventsData] = await Promise.all([
         agentApi.list(pid),
         taskApi.list(pid),
+        eventApi.list(pid, { limit: 100 }),
       ]);
       setAgents(agentsData);
       setTasks(tasksData);
+      setEvents(eventsData);
     } catch (error) {
       console.error('Failed to refresh:', error);
     }
@@ -153,9 +156,9 @@ export function Dashboard() {
 
   const runningAgents = agents.filter(a => ['working', 'thinking', 'waiting', 'review'].includes(agentStatuses[a.id] || a.status)).length;
   const totalTasks = tasks.length;
-  const completedTasks = tasks.filter(t => t.status === 'completed').length;
-  const failedTasks = tasks.filter(t => t.status === 'failed').length;
-  const runningTasks = tasks.filter(t => t.status === 'running').length;
+  const completedTasks = tasks.filter(t => (taskStatuses[t.id] || t.status) === 'completed').length;
+  const failedTasks = tasks.filter(t => (taskStatuses[t.id] || t.status) === 'failed').length;
+  const runningTasks = tasks.filter(t => ['running', 'assigned'].includes(taskStatuses[t.id] || t.status)).length;
 
   const agentRoleGroups = agents.reduce((acc, agent) => {
     const role = agent.role;
@@ -293,7 +296,7 @@ export function Dashboard() {
                   </h3>
                   <div className="space-y-2">
                     {roleAgents.map(agent => {
-                      const currentTask = tasks.find(t => t.assigned_agent_id === agent.id && t.status === 'running');
+                      const currentTask = tasks.find(t => t.id === agent.current_task_id || (t.assigned_agent_id === agent.id && ['running', 'assigned'].includes(taskStatuses[t.id] || t.status)));
                       return (
                         <AgentCard
                           key={agent.id}
@@ -324,9 +327,12 @@ export function Dashboard() {
               </div>
             </div>
             <div className="p-4 max-h-96 overflow-y-auto">
-              {tasks.filter(t => !t.parent_task_id).map(task => (
-                <TaskCard key={task.id} task={task} />
-              ))}
+              {[...tasks]
+                .filter(t => !t.parent_task_id)
+                .sort((a, b) => b.id - a.id)
+                .map(task => (
+                  <TaskCard key={task.id} task={task} />
+                ))}
               {tasks.length === 0 && (
                 <div className="text-center text-muted-foreground py-8">
                   No tasks yet. The Orchestrator will create tasks when workforce starts.

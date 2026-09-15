@@ -19,6 +19,29 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialized")
+    # Reset any stale running/assigned tasks or agents from previous process restarts
+    try:
+        from app.db.session import SessionLocal
+        from app.models import Task, Agent, TaskStatus, AgentStatus
+        db = SessionLocal()
+        try:
+            orphaned_tasks = db.query(Task).filter(Task.status.in_([TaskStatus.ASSIGNED, TaskStatus.RUNNING])).all()
+            for t in orphaned_tasks:
+                t.status = TaskStatus.READY
+                db.merge(t)
+            stuck_agents = db.query(Agent).filter(Agent.status.in_([AgentStatus.WORKING, AgentStatus.THINKING])).all()
+            for a in stuck_agents:
+                a.status = AgentStatus.IDLE
+                a.current_task_id = None
+                db.merge(a)
+            db.commit()
+            if orphaned_tasks or stuck_agents:
+                logger.info(f"Cleaned up {len(orphaned_tasks)} stale tasks and {len(stuck_agents)} stuck agents")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"Error resetting stale state on startup: {e}")
+
     yield
     await orchestrator_service.stop_all()
     logger.info("Shutdown complete")

@@ -44,14 +44,48 @@ manager = ConnectionManager()
 
 
 async def emit_event(project_id: int, event_type: str, payload: dict, agent_id: int = None, task_id: int = None):
+    now = datetime.utcnow()
+    event_id = None
+    event_type_str = event_type.value if hasattr(event_type, "value") else str(event_type)
+
+    try:
+        from app.db.session import SessionLocal
+        from app.models import Event, EventType as ModelEventType
+        db = SessionLocal()
+        try:
+            try:
+                etype = ModelEventType(event_type_str)
+            except (ValueError, KeyError):
+                etype = None
+
+            if etype:
+                db_event = Event(
+                    project_id=project_id,
+                    agent_id=agent_id,
+                    task_id=task_id,
+                    event_type=etype,
+                    payload=payload,
+                    timestamp=now
+                )
+                db.add(db_event)
+                db.commit()
+                db.refresh(db_event)
+                event_id = db_event.id
+        finally:
+            db.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to persist event to database: {e}")
+
     message = {
         "type": "event",
-        "event_type": event_type,
+        "id": event_id,
+        "event_type": event_type_str,
         "project_id": project_id,
         "agent_id": agent_id,
         "task_id": task_id,
         "payload": payload,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": now.isoformat()
     }
     await manager.broadcast_to_project(project_id, message)
 

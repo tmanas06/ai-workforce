@@ -92,7 +92,7 @@ class TaskScheduler:
             await asyncio.sleep(2)
     
     async def _start_task(self, task: Task, agent: Agent):
-        task.status = TaskStatus.ASSIGNED
+        task.status = TaskStatus.RUNNING
         task.started_at = datetime.utcnow()
         agent.status = AgentStatus.WORKING
         agent.current_task_id = task.id
@@ -105,7 +105,9 @@ class TaskScheduler:
         finally:
             db.close()
         
-        await emit_task_update(self.project_id, task.id, "assigned", {"agent_id": agent.id})
+        await emit_event(self.project_id, EventType.TASK_ASSIGNED, {"task_id": task.id, "title": task.title, "agent_id": agent.id}, agent.id, task.id)
+        await emit_event(self.project_id, EventType.TASK_STARTED, {"task_id": task.id, "title": task.title, "agent_id": agent.id}, agent.id, task.id)
+        await emit_task_update(self.project_id, task.id, "running", {"agent_id": agent.id})
         await emit_agent_status(self.project_id, agent.id, "working", {"task_id": task.id})
         
         context = AgentContext(
@@ -211,6 +213,28 @@ class OrchestratorService:
         if project_id in self.schedulers:
             await self.schedulers[project_id].stop()
             del self.schedulers[project_id]
+        
+        db = SessionLocal()
+        try:
+            agents = db.query(Agent).filter(Agent.project_id == project_id).all()
+            for a in agents:
+                a.status = AgentStatus.IDLE
+                a.current_task_id = None
+                db.merge(a)
+                await emit_agent_status(project_id, a.id, "idle")
+
+            running_tasks = db.query(Task).filter(
+                Task.project_id == project_id,
+                Task.status.in_([TaskStatus.RUNNING, TaskStatus.ASSIGNED])
+            ).all()
+            for t in running_tasks:
+                t.status = TaskStatus.READY
+                db.merge(t)
+                await emit_task_update(project_id, t.id, "ready")
+
+            db.commit()
+        finally:
+            db.close()
     
     async def stop_all(self):
         for scheduler in self.schedulers.values():
@@ -243,6 +267,13 @@ class OrchestratorService:
                 db.commit()
                 db.refresh(orchestrator)
             
+            # Ensure orchestrator agent status is reset to IDLE if stuck
+            if orchestrator.status in [AgentStatus.ERROR, AgentStatus.WORKING, AgentStatus.THINKING]:
+                orchestrator.status = AgentStatus.IDLE
+                orchestrator.current_task_id = None
+                db.merge(orchestrator)
+                db.commit()
+
             context = AgentContext(
                 project_id=project_id,
                 agent_id=orchestrator.id,
@@ -253,20 +284,45 @@ class OrchestratorService:
             agent_instance = create_agent(orchestrator, context)
             self.schedulers[project_id].agent_instances[orchestrator.id] = agent_instance
             
-            planning_task = Task(
-                project_id=project_id,
-                title="Create project plan and task breakdown",
-                description=f"Analyze the objective and create a detailed project plan with tasks, dependencies, and agent assignments.\n\nObjective: {project.objective}",
-                status=TaskStatus.READY,
-                priority="critical",
-                assigned_agent_id=orchestrator.id,
-                dependencies=[],
-                max_retries=2
-            )
-            db.add(planning_task)
-            db.commit()
-            
-            await emit_event(project_id, EventType.TASK_CREATED, {"task_id": planning_task.id, "title": planning_task.title}, orchestrator.id, planning_task.id)
+            # Check for existing planning task to avoid duplicate task accumulation
+            existing_planning_task = db.query(Task).filter(
+                Task.project_id == project_id,
+                Task.assigned_agent_id == orchestrator.id,
+                Task.title == "Create project plan and task breakdown"
+            ).order_by(Task.id.desc()).first()
+
+            if existing_planning_task and existing_planning_task.status in [TaskStatus.READY, TaskStatus.ASSIGNED, TaskStatus.RUNNING]:
+                planning_task = existing_planning_task
+                if planning_task.status in [TaskStatus.ASSIGNED, TaskStatus.RUNNING]:
+                    planning_task.status = TaskStatus.READY
+                    db.merge(planning_task)
+                    db.commit()
+            elif existing_planning_task and existing_planning_task.status == TaskStatus.FAILED:
+                # Retry the existing failed planning task cleanly
+                existing_planning_task.status = TaskStatus.READY
+                existing_planning_task.error = None
+                existing_planning_task.retry_count = 0
+                db.merge(existing_planning_task)
+                db.commit()
+                planning_task = existing_planning_task
+                await emit_event(project_id, EventType.TASK_CREATED, {"task_id": planning_task.id, "title": planning_task.title}, orchestrator.id, planning_task.id)
+                await emit_task_update(project_id, planning_task.id, "ready", {"title": planning_task.title})
+            else:
+                planning_task = Task(
+                    project_id=project_id,
+                    title="Create project plan and task breakdown",
+                    description=f"Analyze the objective and create a detailed project plan with tasks, dependencies, and agent assignments.\n\nObjective: {project.objective}",
+                    status=TaskStatus.READY,
+                    priority="critical",
+                    assigned_agent_id=orchestrator.id,
+                    dependencies=[],
+                    max_retries=2
+                )
+                db.add(planning_task)
+                db.commit()
+                db.refresh(planning_task)
+                await emit_event(project_id, EventType.TASK_CREATED, {"task_id": planning_task.id, "title": planning_task.title}, orchestrator.id, planning_task.id)
+                await emit_task_update(project_id, planning_task.id, "ready", {"title": planning_task.title})
             
         finally:
             db.close()

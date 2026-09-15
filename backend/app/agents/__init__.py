@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 import json
 
-from app.models import Agent as AgentModel, Task as TaskModel, TaskStatus, AgentStatus, AgentRole
+from app.models import Agent as AgentModel, Task as TaskModel, TaskStatus, AgentStatus, AgentRole, EventType
 from app.tools import tool_registry, ToolResult
 from app.services.model_providers import get_model_router, ModelRequest, ModelMessage
 from app.websocket.manager import emit_event, emit_agent_status, emit_task_update, emit_log
@@ -56,10 +56,12 @@ class BaseAgent(ABC):
         self.current_task = task
         self.agent_model.status = AgentStatus.WORKING
         self.agent_model.current_task_id = task.id
+        task.status = TaskStatus.RUNNING
         
         db = SessionLocal()
         try:
             db.merge(self.agent_model)
+            db.merge(task)
             db.commit()
         finally:
             db.close()
@@ -117,6 +119,7 @@ class BaseAgent(ABC):
             
             self.agent_model.status = AgentStatus.THINKING
             await emit_agent_status(self.context.project_id, self.agent_model.id, "thinking", {"iteration": iteration})
+            await emit_event(self.context.project_id, EventType.AGENT_THINKING, {"iteration": iteration}, self.agent_model.id, task.id)
             
             action = await self.think(task, initial_context if iteration == 1 else "")
             
