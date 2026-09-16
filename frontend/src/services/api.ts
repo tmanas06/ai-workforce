@@ -40,6 +40,8 @@ export const taskApi = {
   get: (id: number) => api.get<Task>(`/tasks/${id}`).then(r => r.data),
   create: (projectId: number, data: TaskCreate) => api.post<Task>(`/projects/${projectId}/tasks`, data).then(r => r.data),
   update: (id: number, data: TaskUpdate) => api.patch<Task>(`/tasks/${id}`, data).then(r => r.data),
+  cancel: (id: number) => api.post(`/tasks/${id}/cancel`).then(r => r.data),
+  retry: (id: number) => api.post(`/tasks/${id}/retry`).then(r => r.data),
   delete: (id: number) => api.delete(`/tasks/${id}`).then(r => r.data),
 };
 
@@ -47,6 +49,7 @@ export const eventApi = {
   list: (projectId: number, params?: { agent_id?: number; task_id?: number; event_type?: string; limit?: number }) =>
     api.get<Event[]>(`/projects/${projectId}/events`, { params }).then(r => r.data),
   create: (projectId: number, data: EventCreate) => api.post<Event>(`/projects/${projectId}/events`, data).then(r => r.data),
+  clear: (projectId: number) => api.delete(`/projects/${projectId}/events`).then(r => r.data),
 };
 
 export const agentMemoryApi = {

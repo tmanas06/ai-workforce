@@ -108,10 +108,61 @@ export function Dashboard() {
     setStopping(true);
     try {
       await workforceApi.stop(pid);
+      await handleRefresh();
     } catch (error) {
       console.error('Failed to stop workforce:', error);
     } finally {
       setStopping(false);
+    }
+  };
+
+  const handleCancelTask = async (taskId: number) => {
+    try {
+      await taskApi.cancel(taskId);
+      await handleRefresh();
+    } catch (error) {
+      console.error('Failed to cancel task:', error);
+    }
+  };
+
+  const handleRetryTask = async (taskId: number) => {
+    try {
+      await taskApi.retry(taskId);
+      await handleRefresh();
+    } catch (error) {
+      console.error('Failed to retry task:', error);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: number) => {
+    try {
+      await taskApi.delete(taskId);
+      await handleRefresh();
+    } catch (error) {
+      console.error('Failed to delete task:', error);
+    }
+  };
+
+  const handleClearInactiveTasks = async () => {
+    const inactive = tasks.filter(t => ['completed', 'failed', 'cancelled'].includes(taskStatuses[t.id] || t.status));
+    if (inactive.length === 0) return;
+    try {
+      await Promise.all(inactive.map(t => taskApi.delete(t.id)));
+      await handleRefresh();
+    } catch (error) {
+      console.error('Failed to clear inactive tasks:', error);
+    }
+  };
+
+  const handleClearEvents = async () => {
+    if (!pid) return;
+    try {
+      await eventApi.clear(pid);
+      useWorkforceStore.getState().setEvents([]);
+      useWorkforceStore.getState().clearLogs();
+      await handleRefresh();
+    } catch (error) {
+      console.error('Failed to clear events:', error);
     }
   };
 
@@ -159,6 +210,7 @@ export function Dashboard() {
   const completedTasks = tasks.filter(t => (taskStatuses[t.id] || t.status) === 'completed').length;
   const failedTasks = tasks.filter(t => (taskStatuses[t.id] || t.status) === 'failed').length;
   const runningTasks = tasks.filter(t => ['running', 'assigned'].includes(taskStatuses[t.id] || t.status)).length;
+  const cancelledTasks = tasks.filter(t => (taskStatuses[t.id] || t.status) === 'cancelled').length;
 
   const agentRoleGroups = agents.reduce((acc, agent) => {
     const role = agent.role;
@@ -267,8 +319,13 @@ export function Dashboard() {
         <div className="bg-card border border-border rounded-xl p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Failed</p>
-              <p className="text-3xl font-bold text-red-500">{failedTasks}</p>
+              <p className="text-sm text-muted-foreground">{cancelledTasks > 0 ? 'Failed / Cancelled' : 'Failed'}</p>
+              <div className="flex items-baseline gap-2">
+                <p className="text-3xl font-bold text-red-500">{failedTasks}</p>
+                {cancelledTasks > 0 && (
+                  <span className="text-xs text-muted-foreground font-medium">({cancelledTasks} cancelled)</span>
+                )}
+              </div>
             </div>
             <div className="w-12 h-12 rounded-lg bg-red-500/10 flex items-center justify-center">
               <XCircle className="w-6 h-6 text-red-500" />
@@ -285,7 +342,7 @@ export function Dashboard() {
                 <Brain className="w-5 h-5" />
                 Agent Workforce
               </h2>
-              <StatusIndicator status={isConnected ? 'working' : 'offline'} size="sm" showLabel />
+              <StatusIndicator status={isConnected ? (runningAgents > 0 || starting ? 'working' : 'idle') : 'offline'} size="sm" showLabel />
             </div>
             <div className="p-4 space-y-4">
               {Object.entries(agentRoleGroups).map(([role, roleAgents]) => (
@@ -322,16 +379,31 @@ export function Dashboard() {
                 <FolderKanban className="w-5 h-5" />
                 Task Pipeline
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <span className="text-sm text-muted-foreground">Running: {runningTasks}</span>
+                {tasks.some(t => ['completed', 'failed', 'cancelled'].includes(taskStatuses[t.id] || t.status)) && (
+                  <button
+                    onClick={handleClearInactiveTasks}
+                    className="text-xs px-2.5 py-1 rounded bg-muted hover:bg-muted/80 text-muted-foreground transition-colors border border-border"
+                    title="Delete all completed, failed, and cancelled tasks"
+                  >
+                    Clear Inactive
+                  </button>
+                )}
               </div>
             </div>
-            <div className="p-4 max-h-96 overflow-y-auto">
+            <div className="p-4 max-h-96 overflow-y-auto space-y-3">
               {[...tasks]
                 .filter(t => !t.parent_task_id)
                 .sort((a, b) => b.id - a.id)
                 .map(task => (
-                  <TaskCard key={task.id} task={task} />
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    onCancel={handleCancelTask}
+                    onRetry={handleRetryTask}
+                    onDelete={handleDeleteTask}
+                  />
                 ))}
               {tasks.length === 0 && (
                 <div className="text-center text-muted-foreground py-8">
@@ -343,7 +415,7 @@ export function Dashboard() {
         </div>
 
         <div className="space-y-6">
-          <ActivityFeed events={events} logs={logs} autoScroll />
+          <ActivityFeed events={events} logs={logs} autoScroll onClear={handleClearEvents} />
           
           <div className="bg-card border border-border rounded-xl p-4">
             <h3 className="font-semibold mb-3 flex items-center gap-2">

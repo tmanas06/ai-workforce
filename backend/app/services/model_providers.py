@@ -49,16 +49,16 @@ MODEL_ALIASES: Dict[str, str] = {
     "nex n2.5 pro":                           "nex-agi/nex-n2.5-pro:free",
     "nex_n2.5_pro":                           "nex-agi/nex-n2.5-pro:free",
     # Nemotron 3 Ultra (OpenCode)
-    "nemotron 3 ultra":                       "nex-agi/nex-n2.5-pro:free",
-    "nemotron-3-ultra":                       "nex-agi/nex-n2.5-pro:free",
-    "nemotron_3_ultra":                       "nex-agi/nex-n2.5-pro:free",
-    "nvidia/nemotron-3-ultra-550b-a55b:free": "nex-agi/nex-n2.5-pro:free",
-    "nvidia/llama-3.1-nemotron-ultra-253b-v1:free": "nex-agi/nex-n2.5-pro:free",
+    "nemotron 3 ultra":                       "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nemotron-3-ultra":                       "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nemotron_3_ultra":                       "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/llama-3.1-nemotron-ultra-253b-v1:free": "nvidia/nemotron-3-ultra-550b-a55b:free",
     # North Mini Code (ExperimentalLabs)
-    "north mini code":                        "nex-agi/nex-n2.5-pro:free",
-    "north-mini-code":                        "nex-agi/nex-n2.5-pro:free",
-    "north_mini_code":                        "nex-agi/nex-n2.5-pro:free",
-    "cohere/north-mini-code:free":            "nex-agi/nex-n2.5-pro:free",
+    "north mini code":                        "liquid/lfm-2.5-2.6b:free",
+    "north-mini-code":                        "liquid/lfm-2.5-2.6b:free",
+    "north_mini_code":                        "liquid/lfm-2.5-2.6b:free",
+    "cohere/north-mini-code:free":            "liquid/lfm-2.5-2.6b:free",
     # Common cloud models
     "anthropic/claude-3.5-sonnet":            "anthropic/claude-3.5-sonnet",
     "claude-3.5-sonnet":                      "anthropic/claude-3.5-sonnet",
@@ -67,8 +67,8 @@ MODEL_ALIASES: Dict[str, str] = {
     "gpt-4o":                                 "openai/gpt-4o",
     "gpt-4o-mini":                            "openai/gpt-4o-mini",
     # Catch-all
-    "auto":                                   "nex-agi/nex-n2.5-pro:free",
-    "":                                       "nex-agi/nex-n2.5-pro:free",
+    "auto":                                   "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "":                                       "nvidia/nemotron-3-ultra-550b-a55b:free",
 }
 
 
@@ -101,7 +101,7 @@ class ModelProvider(ABC):
         return []
 
     def get_default_model(self) -> str:
-        return "nex-agi/nex-n2.5-pro:free"
+        return "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 
 # ---------------------------------------------------------------------------
@@ -114,23 +114,31 @@ class OpenRouterProvider(ModelProvider):
         self.api_key = config.get("api_key") or os.getenv("OPENROUTER_API_KEY", "")
         self.base_url = config.get("base_url", "https://openrouter.ai/api/v1")
 
+    FREE_FALLBACK_MODELS = [
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "liquid/lfm-2.5-2.6b:free",
+        "nvidia/nemotron-3.5-lightning:free",
+        "poolside/laguna-s-2.1:free",
+        "nex-agi/nex-n2.5-pro:free",
+        "nex-agi/nex-n2.5-mini:free",
+    ]
+
     def is_available(self) -> bool:
         return bool(self.api_key)
 
     def get_default_model(self) -> str:
-        return "nex-agi/nex-n2.5-pro:free"
+        return "nvidia/nemotron-3-ultra-550b-a55b:free"
 
     def get_models(self) -> List[str]:
         return [
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+            "liquid/lfm-2.5-2.6b:free",
+            "nvidia/nemotron-3.5-lightning:free",
+            "poolside/laguna-s-2.1:free",
             "nex-agi/nex-n2.5-pro:free",
-            "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
-            "cohere/command-r-plus-08-2024",
             "anthropic/claude-3.5-sonnet",
-            "anthropic/claude-3.5-haiku",
             "openai/gpt-4o",
             "openai/gpt-4o-mini",
-            "meta-llama/llama-3.1-70b-instruct",
-            "qwen/qwen-2.5-72b-instruct",
         ]
 
     def _headers(self) -> Dict[str, str]:
@@ -144,38 +152,54 @@ class OpenRouterProvider(ModelProvider):
     async def complete(self, request: ModelRequest) -> ModelResponse:
         start = time.time()
         resolved = normalize_model_id(request.model)
-        payload: Dict[str, Any] = {
-            "model": resolved,
-            "messages": [m.model_dump() for m in request.messages],
-            "temperature": request.temperature,
-            "stream": False,
-        }
-        if request.max_tokens:
-            payload["max_tokens"] = request.max_tokens
-        if request.tools:
-            payload["tools"] = request.tools
-            payload["tool_choice"] = request.tool_choice or "auto"
+        
+        models_to_try = [resolved]
+        if ":free" in resolved:
+            for fallback in self.FREE_FALLBACK_MODELS:
+                if fallback not in models_to_try:
+                    models_to_try.append(fallback)
 
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as session:
-            async with session.post(
-                f"{self.base_url}/chat/completions",
-                headers=self._headers(),
-                json=payload,
-            ) as resp:
-                text = await resp.text()
-                if resp.status != 200:
-                    raise Exception(f"OpenRouter API error {resp.status}: {text}")
-                data = json.loads(text)
-                latency = int((time.time() - start) * 1000)
-                msg = data["choices"][0]["message"]
-                return ModelResponse(
-                    content=msg.get("content") or "",
-                    tool_calls=msg.get("tool_calls"),
-                    usage=data.get("usage"),
-                    model=data.get("model", resolved),
-                    provider="openrouter",
-                    latency_ms=latency,
-                )
+        last_exc = None
+        for m in models_to_try:
+            payload: Dict[str, Any] = {
+                "model": m,
+                "messages": [msg.model_dump() for msg in request.messages],
+                "temperature": request.temperature,
+                "stream": False,
+            }
+            if request.max_tokens:
+                payload["max_tokens"] = request.max_tokens
+            if request.tools:
+                payload["tools"] = request.tools
+                payload["tool_choice"] = request.tool_choice or "auto"
+
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45)) as session:
+                    async with session.post(
+                        f"{self.base_url}/chat/completions",
+                        headers=self._headers(),
+                        json=payload,
+                    ) as resp:
+                        text = await resp.text()
+                        if resp.status != 200:
+                            raise Exception(f"OpenRouter API error {resp.status}: {text}")
+                        data = json.loads(text)
+                        latency = int((time.time() - start) * 1000)
+                        msg = data["choices"][0]["message"]
+                        return ModelResponse(
+                            content=msg.get("content") or "",
+                            tool_calls=msg.get("tool_calls"),
+                            usage=data.get("usage"),
+                            model=data.get("model", m),
+                            provider="openrouter",
+                            latency_ms=latency,
+                        )
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        err_detail = str(last_exc) if str(last_exc) else repr(last_exc)
+        raise Exception(f"OpenRouter request failed: {err_detail}")
 
     async def stream_complete(self, request: ModelRequest) -> AsyncGenerator[str, None]:
         resolved = normalize_model_id(request.model)
@@ -232,12 +256,13 @@ class OpenCodeProvider(OpenRouterProvider):
         return bool(self.api_key and self.api_key.startswith("sk-or-"))
 
     def get_default_model(self) -> str:
-        return "nex-agi/nex-n2.5-pro:free"
+        return "nvidia/nemotron-3-ultra-550b-a55b:free"
 
     def get_models(self) -> List[str]:
         return [
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+            "liquid/lfm-2.5-2.6b:free",
             "nex-agi/nex-n2.5-pro:free",
-            "nex-agi/nex-n2.5-mini:free",
         ]
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
@@ -270,12 +295,13 @@ class ExperientialLabsProvider(OpenRouterProvider):
         return bool(self.api_key and self.api_key.startswith("sk-or-"))
 
     def get_default_model(self) -> str:
-        return "nex-agi/nex-n2.5-pro:free"
+        return "liquid/lfm-2.5-2.6b:free"
 
     def get_models(self) -> List[str]:
         return [
+            "liquid/lfm-2.5-2.6b:free",
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
             "nex-agi/nex-n2.5-pro:free",
-            "nex-agi/nex-n2.5-mini:free",
         ]
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
@@ -594,7 +620,8 @@ class ModelRouter:
             try:
                 return await provider.complete(resolved)
             except Exception as exc:
-                errors.append(f"[{provider.name}] {exc}")
+                err_text = str(exc) if str(exc) else repr(exc)
+                errors.append(f"[{provider.name}] {err_text}")
                 continue
 
         error_summary = " | ".join(errors) if errors else "No available providers"

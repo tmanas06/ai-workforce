@@ -88,6 +88,24 @@ export function TasksPage() {
     }
   };
 
+  const handleCancelTask = async (id: number) => {
+    try {
+      await taskApi.cancel(id);
+      loadData();
+    } catch (error) {
+      console.error('Failed to cancel task:', error);
+    }
+  };
+
+  const handleRetryTask = async (id: number) => {
+    try {
+      await taskApi.retry(id);
+      loadData();
+    } catch (error) {
+      console.error('Failed to retry task:', error);
+    }
+  };
+
   const handleDelete = async (id: number) => {
     if (!confirm('Delete this task?')) return;
     try {
@@ -162,7 +180,13 @@ export function TasksPage() {
 
       <div className="space-y-4">
         {filteredTasks.map(task => (
-          <TaskCard key={task.id} task={task} />
+          <TaskCard
+            key={task.id}
+            task={task}
+            onCancel={handleCancelTask}
+            onRetry={handleRetryTask}
+            onDelete={handleDelete}
+          />
         ))}
         {filteredTasks.length === 0 && tasks.length > 0 && (
           <div className="text-center text-muted-foreground py-8">

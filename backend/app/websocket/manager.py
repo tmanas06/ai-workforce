@@ -85,7 +85,7 @@ async def emit_event(project_id: int, event_type: str, payload: dict, agent_id: 
         "agent_id": agent_id,
         "task_id": task_id,
         "payload": payload,
-        "timestamp": now.isoformat()
+        "timestamp": now.isoformat() + "Z"
     }
     await manager.broadcast_to_project(project_id, message)
 
@@ -97,7 +97,7 @@ async def emit_agent_status(project_id: int, agent_id: int, status: str, details
         "agent_id": agent_id,
         "status": status,
         "details": details or {},
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat() + "Z"
     }
     await manager.broadcast_to_project(project_id, message)
 
@@ -109,7 +109,7 @@ async def emit_task_update(project_id: int, task_id: int, status: str, details: 
         "task_id": task_id,
         "status": status,
         "details": details or {},
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat() + "Z"
     }
     await manager.broadcast_to_project(project_id, message)
 
@@ -122,6 +122,6 @@ async def emit_log(project_id: int, level: str, message: str, agent_id: int = No
         "task_id": task_id,
         "level": level,
         "message": message,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat() + "Z"
     }
     await manager.broadcast_to_project(project_id, log_message)

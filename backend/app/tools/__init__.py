@@ -95,8 +95,8 @@ class TerminalTool(Tool):
                 duration = int((time.time() - start) * 1000)
                 return ToolResult(
                     success=process.returncode == 0,
-                    output=stdout.decode() if stdout else "",
-                    error=stderr.decode() if stderr else "",
+                    output=stdout.decode("utf-8", errors="replace") if stdout else "",
+                    error=stderr.decode("utf-8", errors="replace") if stderr else "",
                     exit_code=process.returncode,
                     duration_ms=duration
                 )
@@ -110,6 +110,13 @@ class TerminalTool(Tool):
                     exit_code=-1,
                     duration_ms=duration
                 )
+            except asyncio.CancelledError:
+                try:
+                    process.kill()
+                    await process.communicate()
+                except Exception:
+                    pass
+                raise
         except Exception as e:
             duration = int((time.time() - start) * 1000)
             return ToolResult(success=False, error=str(e), exit_code=-1, duration_ms=duration)

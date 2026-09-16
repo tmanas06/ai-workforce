@@ -21,6 +21,7 @@ class TaskScheduler:
         self.running_tasks: Dict[int, asyncio.Task] = {}
         self.agent_instances: Dict[int, BaseAgent] = {}
         self.stopped = False
+        self.loop_task: Optional[asyncio.Task] = None
     
     def get_ready_tasks(self, db: Session) -> List[Task]:
         tasks = db.query(Task).filter(
@@ -56,10 +57,14 @@ class TaskScheduler:
     
     async def stop(self):
         self.stopped = True
-        for task in self.running_tasks.values():
+        if self.loop_task and not self.loop_task.done():
+            self.loop_task.cancel()
+        for task in list(self.running_tasks.values()):
             task.cancel()
-        await asyncio.gather(*self.running_tasks.values(), return_exceptions=True)
+        if self.running_tasks:
+            await asyncio.gather(*self.running_tasks.values(), return_exceptions=True)
         self.running_tasks.clear()
+        self.agent_instances.clear()
     
     async def _run_loop(self):
         while not self.stopped:
@@ -143,8 +148,14 @@ class TaskScheduler:
             
             await emit_event(self.project_id, EventType.TASK_COMPLETED, {"task_id": task.id, "result": result}, agent_instance.agent_model.id, task.id)
             
-            await self._trigger_dependent_tasks(task.id)
-            
+        except asyncio.CancelledError:
+            task.status = TaskStatus.CANCELLED
+            task.error = "Task was cancelled"
+            db.merge(task)
+            db.commit()
+            await emit_event(self.project_id, EventType.TASK_CANCELLED, {"task_id": task.id, "error": "Task was cancelled"}, agent_instance.agent_model.id, task.id)
+            await emit_task_update(self.project_id, task.id, "cancelled", {"error": "Task was cancelled"})
+            raise
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.error = str(e)
@@ -206,8 +217,8 @@ class OrchestratorService:
         self.schedulers[project_id] = scheduler
         
         await self._initialize_orchestrator(project_id)
-        # Start scheduler in background
-        asyncio.create_task(scheduler.start())
+        # Start scheduler in background and track loop task
+        scheduler.loop_task = asyncio.create_task(scheduler.start())
     
     async def stop_project(self, project_id: int):
         if project_id in self.schedulers:
@@ -223,56 +234,194 @@ class OrchestratorService:
                 db.merge(a)
                 await emit_agent_status(project_id, a.id, "idle")
 
-            running_tasks = db.query(Task).filter(
+            # Cancel all active/pending tasks: running, assigned, ready, planned, blocked
+            active_tasks = db.query(Task).filter(
                 Task.project_id == project_id,
-                Task.status.in_([TaskStatus.RUNNING, TaskStatus.ASSIGNED])
+                Task.status.in_([
+                    TaskStatus.RUNNING,
+                    TaskStatus.ASSIGNED,
+                    TaskStatus.READY,
+                    TaskStatus.PLANNED,
+                    TaskStatus.BLOCKED,
+                ])
             ).all()
-            for t in running_tasks:
-                t.status = TaskStatus.READY
+            for t in active_tasks:
+                t.status = TaskStatus.CANCELLED
+                t.error = "Stopped by user"
                 db.merge(t)
-                await emit_task_update(project_id, t.id, "ready")
+                await emit_task_update(project_id, t.id, "cancelled", {"error": "Stopped by user"})
+                await emit_event(
+                    project_id,
+                    EventType.TASK_CANCELLED,
+                    {"task_id": t.id, "title": t.title, "status": "cancelled", "reason": "Stopped by user"},
+                    t.assigned_agent_id,
+                    t.id
+                )
 
             db.commit()
         finally:
             db.close()
     
     async def stop_all(self):
-        for scheduler in self.schedulers.values():
-            await scheduler.stop()
+        project_ids = list(self.schedulers.keys())
+        for pid in project_ids:
+            await self.stop_project(pid)
+        
+        # Also clean up any lingering active tasks and working agents across all projects in DB
+        db = SessionLocal()
+        try:
+            agents = db.query(Agent).filter(Agent.status.in_([AgentStatus.WORKING, AgentStatus.THINKING])).all()
+            for a in agents:
+                a.status = AgentStatus.IDLE
+                a.current_task_id = None
+                db.merge(a)
+                await emit_agent_status(a.project_id, a.id, "idle")
+
+            active_tasks = db.query(Task).filter(
+                Task.status.in_([
+                    TaskStatus.RUNNING,
+                    TaskStatus.ASSIGNED,
+                    TaskStatus.READY,
+                    TaskStatus.PLANNED,
+                    TaskStatus.BLOCKED,
+                ])
+            ).all()
+            for t in active_tasks:
+                t.status = TaskStatus.CANCELLED
+                t.error = "Stopped by user"
+                db.merge(t)
+                await emit_task_update(t.project_id, t.id, "cancelled", {"error": "Stopped by user"})
+                await emit_event(
+                    t.project_id,
+                    EventType.TASK_CANCELLED,
+                    {"task_id": t.id, "title": t.title, "status": "cancelled", "reason": "Stopped by user"},
+                    t.assigned_agent_id,
+                    t.id
+                )
+
+            db.commit()
+        finally:
+            db.close()
+        
         self.schedulers.clear()
+
+    async def cancel_task(self, task_id: int):
+        db = SessionLocal()
+        try:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if not task:
+                return None
+            
+            project_id = task.project_id
+            
+            # Cancel running asyncio task if active in scheduler
+            if project_id in self.schedulers:
+                scheduler = self.schedulers[project_id]
+                if task_id in scheduler.running_tasks:
+                    scheduler.running_tasks[task_id].cancel()
+            
+            # Reset assigned agent if any
+            if task.assigned_agent_id:
+                agent = db.query(Agent).filter(Agent.id == task.assigned_agent_id).first()
+                if agent and agent.current_task_id == task_id:
+                    agent.status = AgentStatus.IDLE
+                    agent.current_task_id = None
+                    db.merge(agent)
+                    await emit_agent_status(project_id, agent.id, "idle")
+            
+            task.status = TaskStatus.CANCELLED
+            task.error = "Task cancelled by user"
+            db.merge(task)
+            db.commit()
+            db.refresh(task)
+            
+            await emit_task_update(project_id, task.id, "cancelled", {"error": "Task cancelled by user"})
+            await emit_event(
+                project_id,
+                EventType.TASK_CANCELLED,
+                {"task_id": task.id, "title": task.title, "status": "cancelled"},
+                task.assigned_agent_id,
+                task.id
+            )
+            return task
+        finally:
+            db.close()
     
+    async def retry_task(self, task_id: int):
+        db = SessionLocal()
+        try:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if not task:
+                return None
+            project_id = task.project_id
+            task.status = TaskStatus.READY
+            task.error = None
+            task.retry_count = 0
+            task.completed_at = None
+            db.merge(task)
+            db.commit()
+            db.refresh(task)
+
+            await emit_task_update(project_id, task.id, "ready", {"title": task.title})
+            await emit_event(
+                project_id,
+                EventType.TASK_CREATED,
+                {"task_id": task.id, "title": task.title, "status": "ready"},
+                task.assigned_agent_id,
+                task.id
+            )
+
+            # Ensure the project scheduler is running
+            if project_id not in self.schedulers:
+                await self.start_project(project_id)
+
+            return task
+        finally:
+            db.close()
+
     async def _initialize_orchestrator(self, project_id: int):
         db = SessionLocal()
         try:
             project = db.query(Project).filter(Project.id == project_id).first()
             if not project:
                 return
-            
-            orchestrator = db.query(Agent).filter(
-                Agent.project_id == project_id,
-                Agent.role == AgentRole.ORCHESTRATOR
-            ).first()
-            
-            if not orchestrator:
-                orchestrator = Agent(
-                    project_id=project_id,
-                    role=AgentRole.ORCHESTRATOR,
-                    name="Orchestrator",
-                    runtime_type="subprocess",
-                    capabilities=["planning", "delegation", "monitoring"],
-                    permissions={"filesystem": "workspace", "terminal": "restricted"},
-                    status=AgentStatus.IDLE
-                )
-                db.add(orchestrator)
-                db.commit()
-                db.refresh(orchestrator)
-            
-            # Ensure orchestrator agent status is reset to IDLE if stuck
-            if orchestrator.status in [AgentStatus.ERROR, AgentStatus.WORKING, AgentStatus.THINKING]:
-                orchestrator.status = AgentStatus.IDLE
-                orchestrator.current_task_id = None
-                db.merge(orchestrator)
-                db.commit()
+
+            # Ensure complete workforce team exists for this project
+            default_workforce = [
+                (AgentRole.ORCHESTRATOR, "Orchestrator", ["planning", "delegation", "monitoring"], {"filesystem": "workspace", "terminal": "restricted"}),
+                (AgentRole.ARCHITECT, "Architect", ["architecture", "system-design", "specifications"], {"filesystem": "workspace", "terminal": "restricted"}),
+                (AgentRole.DEVELOPER, "Developer", ["coding", "debugging", "implementation"], {"filesystem": "workspace", "terminal": "full"}),
+                (AgentRole.QA, "QA / Tester", ["testing", "validation", "verification"], {"filesystem": "workspace", "terminal": "restricted"}),
+                (AgentRole.REVIEWER, "Code Reviewer", ["code-review", "quality-audit", "compliance"], {"filesystem": "workspace", "terminal": "restricted"}),
+            ]
+
+            agents_by_role = {}
+            for role, name, capabilities, perms in default_workforce:
+                agent = db.query(Agent).filter(
+                    Agent.project_id == project_id,
+                    Agent.role == role
+                ).first()
+                if not agent:
+                    agent = Agent(
+                        project_id=project_id,
+                        role=role,
+                        name=name,
+                        runtime_type="subprocess",
+                        capabilities=capabilities,
+                        permissions=perms,
+                        status=AgentStatus.IDLE
+                    )
+                    db.add(agent)
+                    db.commit()
+                    db.refresh(agent)
+                elif agent.status in [AgentStatus.ERROR, AgentStatus.WORKING, AgentStatus.THINKING]:
+                    agent.status = AgentStatus.IDLE
+                    agent.current_task_id = None
+                    db.merge(agent)
+                    db.commit()
+                agents_by_role[role] = agent
+
+            orchestrator = agents_by_role[AgentRole.ORCHESTRATOR]
 
             context = AgentContext(
                 project_id=project_id,
@@ -297,8 +446,8 @@ class OrchestratorService:
                     planning_task.status = TaskStatus.READY
                     db.merge(planning_task)
                     db.commit()
-            elif existing_planning_task and existing_planning_task.status == TaskStatus.FAILED:
-                # Retry the existing failed planning task cleanly
+            elif existing_planning_task and existing_planning_task.status in [TaskStatus.FAILED, TaskStatus.CANCELLED]:
+                # Retry the existing failed or cancelled planning task cleanly
                 existing_planning_task.status = TaskStatus.READY
                 existing_planning_task.error = None
                 existing_planning_task.retry_count = 0

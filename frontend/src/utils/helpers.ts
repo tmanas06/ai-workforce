@@ -6,17 +6,38 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatRelativeTime(dateString: string): string {
+export function parseUTCDate(dateInput: string | Date | undefined | null): Date {
+  if (!dateInput) return new Date();
+  if (dateInput instanceof Date) return dateInput;
+  let s = String(dateInput).trim();
+  if (!s) return new Date();
+  if (/^\d+$/.test(s)) {
+    const num = Number(s);
+    return new Date(num > 1e11 ? num : num * 1000);
+  }
+  s = s.replace(' ', 'T');
+  if (!s.endsWith('Z') && !/[+-]\d{2}(:\d{2})?$/.test(s)) {
+    s += 'Z';
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? new Date(dateInput) : d;
+}
+
+export function formatRelativeTime(dateString: string | Date | undefined | null): string {
+  if (!dateString) return 'unknown';
   try {
-    return formatDistanceToNow(new Date(dateString), { addSuffix: true });
+    const date = parseUTCDate(dateString);
+    return formatDistanceToNow(date, { addSuffix: true });
   } catch {
     return 'unknown';
   }
 }
 
-export function formatDateTime(dateString: string): string {
+export function formatDateTime(dateString: string | Date | undefined | null): string {
+  if (!dateString) return 'unknown';
   try {
-    return format(new Date(dateString), 'MMM d, yyyy HH:mm:ss');
+    const date = parseUTCDate(dateString);
+    return format(date, 'MMM d, yyyy HH:mm:ss');
   } catch {
     return 'invalid date';
   }

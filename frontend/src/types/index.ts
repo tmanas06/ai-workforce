@@ -8,7 +8,7 @@ export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'changes_reques
 
 export type EventType = 
   | 'agent.created' | 'agent.started' | 'agent.stopped' | 'agent.thinking' | 'agent.tool_called' | 'agent.file_changed'
-  | 'task.created' | 'task.assigned' | 'task.started' | 'task.blocked' | 'task.failed' | 'task.completed' | 'task.reassigned'
+  | 'task.created' | 'task.assigned' | 'task.started' | 'task.blocked' | 'task.failed' | 'task.completed' | 'task.cancelled' | 'task.reassigned'
   | 'review.started' | 'review.failed' | 'review.passed'
   | 'model.requested' | 'model.started' | 'model.failed' | 'model.fallback'
   | 'human.approval_required' | 'human.approved' | 'human.rejected';

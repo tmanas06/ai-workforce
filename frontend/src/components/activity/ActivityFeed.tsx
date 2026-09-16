@@ -3,13 +3,14 @@
 import React from 'react';
 import { cn } from '../../utils/helpers';
 import { formatRelativeTime } from '../../utils/helpers';
-import { Terminal, FileText, GitBranch, Brain, AlertTriangle, CheckCircle, XCircle, Loader2, Zap, MessageSquare } from 'lucide-react';
+import { Terminal, FileText, GitBranch, Brain, AlertTriangle, CheckCircle, XCircle, Loader2, Zap, MessageSquare, Square, Trash2 } from 'lucide-react';
 import type { Event, LogEntry } from '../../types';
 
 interface ActivityFeedProps {
   events: Event[];
   logs: LogEntry[];
   autoScroll?: boolean;
+  onClear?: () => void;
 }
 
 const eventIcons: Record<string, React.ReactNode> = {
@@ -25,6 +26,7 @@ const eventIcons: Record<string, React.ReactNode> = {
   'task.blocked': <AlertTriangle className="w-4 h-4 text-yellow-500" />,
   'task.failed': <XCircle className="w-4 h-4 text-red-500" />,
   'task.completed': <CheckCircle className="w-4 h-4 text-green-500" />,
+  'task.cancelled': <Square className="w-4 h-4 text-gray-400" />,
   'task.reassigned': <GitBranch className="w-4 h-4 text-orange-500" />,
   'review.started': <Brain className="w-4 h-4 text-pink-500" />,
   'review.passed': <CheckCircle className="w-4 h-4 text-green-500" />,
@@ -39,7 +41,7 @@ const logLevelIcons: Record<string, React.ReactNode> = {
   debug: <Terminal className="w-4 h-4 text-gray-500" />,
 };
 
-export function ActivityFeed({ events, logs, autoScroll = true }: ActivityFeedProps) {
+export function ActivityFeed({ events, logs, autoScroll = true, onClear }: ActivityFeedProps) {
   const feedRef = React.useRef<HTMLDivElement>(null);
   const [showEvents, setShowEvents] = React.useState(true);
   const [showLogs, setShowLogs] = React.useState(true);
@@ -78,16 +80,26 @@ export function ActivityFeed({ events, logs, autoScroll = true }: ActivityFeedPr
             placeholder="Filter..."
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="px-2 py-1 text-sm bg-muted border border-border rounded w-40"
+            className="px-2 py-1 text-sm bg-muted border border-border rounded w-28 md:w-36"
           />
-          <label className="flex items-center gap-1 text-sm text-muted-foreground">
+          <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer">
             <input type="checkbox" checked={showEvents} onChange={(e) => setShowEvents(e.target.checked)} className="w-3 h-3" />
             Events
           </label>
-          <label className="flex items-center gap-1 text-sm text-muted-foreground">
+          <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer">
             <input type="checkbox" checked={showLogs} onChange={(e) => setShowLogs(e.target.checked)} className="w-3 h-3" />
             Logs
           </label>
+          {onClear && (
+            <button
+              onClick={onClear}
+              title="Clear activity log"
+              className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-red-400 hover:bg-muted rounded border border-border transition-colors ml-1"
+            >
+              <Trash2 className="w-3 h-3" />
+              Clear
+            </button>
+          )}
         </div>
       </div>
       
@@ -110,7 +122,7 @@ export function ActivityFeed({ events, logs, autoScroll = true }: ActivityFeedPr
                     {event.task_id && <span className="text-xs px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded">Task #{event.task_id}</span>}
                   </div>
                   {event.payload && (
-                    <pre className="mt-1 text-xs text-muted-foreground font-mono overflow-x-auto max-h-24 overflow-y-auto">
+                    <pre className="mt-1 text-xs text-muted-foreground font-mono whitespace-pre-wrap break-all max-h-28 overflow-y-auto bg-muted/40 p-1.5 rounded">
                       {JSON.stringify(event.payload, null, 2)}
                     </pre>
                   )}

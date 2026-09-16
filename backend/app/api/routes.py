@@ -250,6 +250,13 @@ def list_events(
     return query.order_by(Event.timestamp.desc()).limit(limit).all()
 
 
+@router.delete("/projects/{project_id}/events")
+def clear_events(project_id: int, db: Session = Depends(get_db)):
+    db.query(Event).filter(Event.project_id == project_id).delete()
+    db.commit()
+    return {"message": "Events cleared", "project_id": project_id}
+
+
 @router.post("/agents/{agent_id}/memory", response_model=AgentMemoryResponse)
 def set_agent_memory(agent_id: int, memory: AgentMemoryCreate, db: Session = Depends(get_db)):
     agent = db.query(Agent).filter(Agent.id == agent_id).first()

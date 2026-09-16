@@ -83,6 +83,7 @@ class EventType(str, enum.Enum):
     TASK_BLOCKED = "task.blocked"
     TASK_FAILED = "task.failed"
     TASK_COMPLETED = "task.completed"
+    TASK_CANCELLED = "task.cancelled"
     TASK_REASSIGNED = "task.reassigned"
     REVIEW_STARTED = "review.started"
     REVIEW_FAILED = "review.failed"

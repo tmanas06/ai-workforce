@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
@@ -95,6 +95,22 @@ async def stop_workforce(req: WorkforceStopRequest):
 async def stop_all_workforce():
     await orchestrator_service.stop_all()
     return {"message": "All workforce stopped"}
+
+
+@app.post("/api/v1/tasks/{task_id}/cancel")
+async def cancel_task_endpoint(task_id: int):
+    task = await orchestrator_service.cancel_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"message": "Task cancelled", "task_id": task_id}
+
+
+@app.post("/api/v1/tasks/{task_id}/retry")
+async def retry_task_endpoint(task_id: int):
+    task = await orchestrator_service.retry_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"message": "Task retried", "task_id": task_id}
 
 
 if __name__ == "__main__":
